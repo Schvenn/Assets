@@ -185,7 +185,7 @@ foreach ($path in $paths) {$test = Join-Path $path $npp; if (Test-Path $test) {$
 & $script:edit $file}
 
 # Error checking.
-if ($resourcetype -notmatch "(?i)^(cmd|script)$" -and $action -notmatch "(?i)^(view|edit)$") {Write-Host -f cyan "`nUsage: assets `"cmd/script`" `"view/edit`" `"resource`"`n"; return}
+if ($resourcetype -notmatch "(?i)^(cmd|script)$" -and $action -notmatch "(?i)^(view|edit)$") {Write-Host -f cyan "`nUsage: assets <cmd/script> <view/edit> <resource> -help`n"; return}
 
 # Script path completion
 if ($resourcetype -eq "script" -and $resource.length -ge 1 -and -not (Test-Path $resource -PathType Leaf)) {$priority = @('.psm1', '.ps1', '.psd1'); $candidates = Get-ChildItem -Path $powershell -Recurse -Include *.psm1, *.ps1, *.psd1 | Where-Object { $_.BaseName -match "(?i)^$resource$" }
@@ -276,43 +276,39 @@ Export-ModuleMember -Alias ec, em, ep, es, see, ss
 
 <#
 ## Assets
-
 This function allows you to manage custom user content in your PowerShell environment with a myriad of options:
 
-To see the basic syntax type the following:
-	assets
-		• Usage: assets "cmd/script" "view/edit" "resource"
+    Usage: assets <cmd/script> <view/edit> <resource> -help
 
 To view commands or scripts on screen in a contextualized format use:
-	assets cmd view "resource"
-		• If no "resource" is specified, the function will display a menu of available functions from which to choose.
-	assets script view "resource"
-		• If no "resource" is specified, the function will display a menu of available scripts from which to choose.
-		• While viewing long scripts, the output will be broken into pages, with options including:
-			Press [Enter] to continue, A to view the whole file, E to Edit or Q to quit
 
-To edit commands or scripts use:
-	assets cmd edit "resource"
-		• If no "resource" is specified, the function will display a menu of available functions from which to choose.
-	assets script edit "resource"
-		• If no "resource" is specified, the function will display a menu of available scripts from which to choose.
+    assets cmd view "resource"
+    assets script view "resource"
+    assets cmd edit "resource"
+    assets script edit "resource"
+
+• If no "resource" is specified, the function will display a menu of available commands/scripts.
+
+• While viewing long scripts, a contexualized viewer will be employed.
 ## Other Commands
 
 Macros and aliases have been created for common functions within the Assets framework, in order to expedite common tasks:
 
-	• editprofile/ep - Edit this user's Powershell profile.
+        editprofile/ep - Edit this user's Powershell profile.
 
 Other commands, with an optional "resource" parameter:
 
-• Usage: <command> "resource"
-	• editcmd/ec 	 - Edit the script that hosts the command.
-	• editmodule/em  - Edit the module specified, or ask to create it, if it doesn't already exist.
-	• editscript/es	 - Edit a specific script.
-	• seecmd/see	 - View a specific command.
-	• seescript/ss	 - View a specific script.
+    Usage: <command> "resource"
 
-If no resource is provided at the command line, a menu will be presented for each of the above options.
-In the case of editmodule, this will consist of PSM1 and PSD1 files, but the editscript menu will also include PS1 files.
+        editcmd/ec     - Edit the script that hosts the command.
+        editmodule/em  - Edit the module specified, or ask to create it, if it doesn't exist.
+        editscript/es  - Edit a specific script.
+        seecmd/see     - View a specific command.
+        seescript/ss   - View a specific script.
+
+• If no "resource" is specified, the function will display a menu of available commands/scripts.
+
+• In the case of editmodule, this will consist of PSM1 and PSD1 files, but the editscript menu will also include PS1 files.
 ## License
 MIT License
 
