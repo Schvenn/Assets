@@ -2,42 +2,166 @@ function assets {# A suite of options to view or edit commands and scripts for t
 param ([string]$resourcetype, [string]$action, [string]$resource, [switch]$help)
 $script:powershell = Split-Path $profile
 
-if ($help) {# Inline help.
 # Modify fields sent to it with proper word wrapping.
-function wordwrap ($field, $maximumlinelength) {if ($null -eq $field -or $field.Length -eq 0) {return $null}
+function wordwrap ($field, $maximumlinelength) {if ($null -eq $field) {return $null}
 $breakchars = ',.;?!\/ '; $wrapped = @()
-
 if (-not $maximumlinelength) {[int]$maximumlinelength = (100, $Host.UI.RawUI.WindowSize.Width | Measure-Object -Maximum).Maximum}
-if ($maximumlinelength) {if ($maximumlinelength -lt 60) {[int]$maximumlinelength = 60}
-if ($maximumlinelength -gt $Host.UI.RawUI.BufferSize.Width) {[int]$maximumlinelength = $Host.UI.RawUI.BufferSize.Width}}
-
-foreach ($line in $field -split "`n") {if ($line.Trim().Length -eq 0) {$wrapped += ''; continue}
-$remaining = $line.Trim()
+if ($maximumlinelength -lt 60) {[int]$maximumlinelength = 60}
+if ($maximumlinelength -gt $Host.UI.RawUI.BufferSize.Width) {[int]$maximumlinelength = $Host.UI.RawUI.BufferSize.Width}
+foreach ($line in $field -split "`n", [System.StringSplitOptions]::None) {if ($line -eq "") {$wrapped += ""; continue}
+$remaining = $line
 while ($remaining.Length -gt $maximumlinelength) {$segment = $remaining.Substring(0, $maximumlinelength); $breakIndex = -1
-
 foreach ($char in $breakchars.ToCharArray()) {$index = $segment.LastIndexOf($char)
-if ($index -gt $breakIndex) {$breakChar = $char; $breakIndex = $index}}
-if ($breakIndex -lt 0) {$breakIndex = $maximumlinelength - 1; $breakChar = ''}
-$chunk = $segment.Substring(0, $breakIndex + 1).TrimEnd(); $wrapped += $chunk; $remaining = $remaining.Substring($breakIndex + 1).TrimStart()}
-
-if ($remaining.Length -gt 0) {$wrapped += $remaining}}
+if ($index -gt $breakIndex) {$breakIndex = $index}}
+if ($breakIndex -lt 0) {$breakIndex = $maximumlinelength - 1}
+$chunk = $segment.Substring(0, $breakIndex + 1); $wrapped += $chunk; $remaining = $remaining.Substring($breakIndex + 1)}
+if ($remaining.Length -gt 0 -or $line -eq "") {$wrapped += $remaining}}
 return ($wrapped -join "`n")}
 
-function scripthelp ($section) {# (Internal) Generate the help sections from the comments section of the script.
-""; Write-Host -f yellow ("-" * 100); $pattern = "(?ims)^## ($section.*?)(##|\z)"; $match = [regex]::Match($scripthelp, $pattern); $lines = $match.Groups[1].Value.TrimEnd() -split "`r?`n", 2; Write-Host $lines[0] -f yellow; Write-Host -f yellow ("-" * 100)
-if ($lines.Count -gt 1) {wordwrap $lines[1] 100| Out-String | Out-Host -Paging}; Write-Host -f yellow ("-" * 100)}
+# Display a horizontal line.
+function line ($colour, $length, [switch]$pre, [switch]$post, [switch]$double) {if (-not $length) {[int]$length = (100, $Host.UI.RawUI.WindowSize.Width | Measure-Object -Maximum).Maximum}
+if ($length) {if ($length -lt 60) {[int]$length = 60}
+if ($length -gt $Host.UI.RawUI.BufferSize.Width) {[int]$length = $Host.UI.RawUI.BufferSize.Width}}
+if ($pre) {Write-Host ""}
+$character = if ($double) {"="} else {"-"}
+Write-Host -f $colour ($character * $length)
+if ($post) {Write-Host ""}}
+
+# Inline help.
+if ($help) {function scripthelp ($section) {line yellow 100 -pre; $pattern = "(?ims)^## ($section.*?)(##|\z)"; $match = [regex]::Match($scripthelp, $pattern); $lines = $match.Groups[1].Value.TrimEnd() -split "`r?`n", 2; Write-Host $lines[0] -f yellow; line yellow 100
+if ($lines.Count -gt 1) {wordwrap $lines[1] 100 | Out-String | Out-Host -Paging}; line yellow 100}
+
 $scripthelp = Get-Content -Raw -Path $PSCommandPath; $sections = [regex]::Matches($scripthelp, "(?im)^## (.+?)(?=\r?\n)")
 if ($sections.Count -eq 1) {cls; Write-Host "$([System.IO.Path]::GetFileNameWithoutExtension($PSCommandPath)) Help:" -f cyan; scripthelp $sections[0].Groups[1].Value; ""; return}
-
 $selection = $null
-do {cls; Write-Host "$([System.IO.Path]::GetFileNameWithoutExtension($PSCommandPath)) Help Sections:`n" -f cyan; for ($i = 0; $i -lt $sections.Count; $i++) {
-"{0}: {1}" -f ($i + 1), $sections[$i].Groups[1].Value}
+do {cls; Write-Host "$([System.IO.Path]::GetFileNameWithoutExtension($PSCommandPath)) Help Sections:`n" -f cyan; for ($i = 0; $i -lt $sections.Count; $i++) {"{0}: {1}" -f ($i + 1), $sections[$i].Groups[1].Value}
 if ($selection) {scripthelp $sections[$selection - 1].Groups[1].Value}
 $input = Read-Host "`nEnter a section number to view"
 if ($input -match '^\d+$') {$index = [int]$input
 if ($index -ge 1 -and $index -le $sections.Count) {$selection = $index}
 else {$selection = $null}} else {""; return}}
 while ($true); return}
+
+# Contextual display
+function contextdisplay ($command) {foreach ($line in $command) {if ($line -match '^<#') {$inBlockComment = $true}
+if ($inBlockComment) {$colour = 'darkgray'
+if ($line -match "^## ") {$colour = 'gray'}
+if ($line -match '^#>') {$inBlockComment = $false}}
+else {if ($line -match '^<?#') {$colour = 'yellow'}
+elseif ($line -match '(?i)^function\s') {$colour = 'cyan'}
+elseif ($line -match '(?i)^sal\s') {$colour = 'green'}
+else {$colour = 'white'}}
+Write-Host -f $colour $line}}
+
+# View commands and scripts.
+function assetviewer ($name, $content) {$searchHits = @(0..($content.Count - 1) | Where-Object {$content[$_] -match $pattern}); $currentSearchIndex = $searchHits | Where-Object {$_ -gt $pos} | Select-Object -First 1; $pos = $currentSearchIndex; $script:coloredContent = @(); $content = $content | ForEach-Object {wordwrap $_ $null} | ForEach-Object {$_ -split "`n"}
+
+# Pre-configure colours.
+$content | ForEach-Object {$line = $_
+if ($line -match '^<#') {$inBlockComment = $true}
+if ($inBlockComment) {$colour = 'darkgray'
+if ($line -match "^## ") {$colour = 'gray'}
+if ($line -match '^#>') {$inBlockComment = $false}}
+else {if ($line -match '^(#|-----)') {$colour = 'yellow'}
+elseif ($line -match '(?i)^function\s') {$colour = 'cyan'}
+elseif ($line -match '(?i)^sal\s') {$colour = 'green'}
+else {$colour = 'white'}}
+$script:coloredContent += [PSCustomObject]@{Line = $line; Color = $colour}}
+
+$pageSize = 44; $pos = 0; $script:fileName = [System.IO.Path]::GetFileName($script:file); $searchHits = @(); $currentSearchIndex = -1
+
+function getbreakpoint {param($start); return [Math]::Min($start + $pageSize - 1, $content.Count - 1)}
+
+function showpage {cls; $start = $pos; $end = getbreakpoint $start; $pageLines = $script:coloredContent[$start..$end]; $highlight = if ($searchTerm) {"$pattern"} else {$null}
+foreach ($entry in $pageLines) {$line = $entry.Line; $colour = $entry.Color
+if ($highlight -and $line -match $highlight) {$parts = [regex]::Split($line, "($highlight)")
+foreach ($part in $parts) {if ($part -match "^$highlight$") {Write-Host -f black -b yellow $part -n}
+else {Write-Host -f $colour $part -n}}; ""}
+else {Write-Host -f $colour $line}}
+
+# Pad with blank lines if this page has fewer than $pageSize lines
+$linesShown = $end - $start + 1
+if ($linesShown -lt $pageSize) {for ($i = 1; $i -le ($pageSize - $linesShown); $i++) {Write-Host ""}}}
+
+# Main menu loop
+$statusmessage = ""; $errormessage = ""; $searchmessage = "Search Commands"
+while ($true) {showpage; $pageNum = [math]::Floor($pos / $pageSize) + 1; $totalPages = [math]::Ceiling($content.Count / $pageSize)
+if ($searchHits.Count -gt 0) {$currentMatch = [array]::IndexOf($searchHits, $pos); if ($currentMatch -ge 0) {$searchmessage = "Match $($currentMatch + 1) of $($searchHits.Count)"}
+else {$searchmessage = "Search active ($($searchHits.Count) matches)"}}
+line yellow -double
+if (-not $errormessage -or $errormessage.length -lt 1) {$middlecolour = "white"; $middle = $statusmessage} else {$middlecolour = "red"; $middle = $errormessage}
+$left = "$name".PadRight(57); $middle = "$middle".PadRight(44); $right = "(Page $pageNum of $totalPages)"
+Write-Host -f white $left -n; Write-Host -f $middlecolour $middle -n; Write-Host -f cyan $right
+$left = "Page Commands".PadRight(55); $middle = "| $searchmessage ".PadRight(34); $right = "| Exit Commands"
+Write-Host -f yellow ($left + $middle + $right)
+Write-Host -f yellow "[F]irst [N]ext [+/-]# Lines P[A]ge # [P]revious [L]ast | [<][S]earch[>] [#]Match [C]lear | [Q]uit " -n
+$statusmessage = ""; $errormessage = ""; $searchmessage = "Search Commands"
+
+function getaction {[string]$buffer = ""
+while ($true) {$key = [System.Console]::ReadKey($true)
+switch ($key.Key) {'LeftArrow' {return 'P'}
+'UpArrow' {return 'U1L'}
+'Backspace' {return 'P'}
+'PageUp' {return 'P'}
+'RightArrow' {return 'N'}
+'DownArrow' {return 'D1L'}
+'PageDown' {return 'N'}
+'Enter' {if ($buffer) {return $buffer}
+else {return 'N'}}
+'Home' {return 'F'}
+'End' {return 'L'}
+default {$char = $key.KeyChar
+switch ($char) {',' {return '<'}
+'.' {return '>'}
+{$_ -match '(?i)[B-Z]'} {return $char.ToString().ToUpper()}
+{$_ -match '[A#\+\-\d]'} {$buffer += $char}
+default {$buffer = ""}}}}}}
+
+$action = getaction
+
+switch ($action.ToString().ToUpper()) {'F' {$pos = 0}
+'N' {$next = getbreakpoint $pos; if ($next -lt $content.Count - 1) {$pos = $next + 1}
+else {$pos = [Math]::Min($pos + $pageSize, $content.Count - 1)}}
+'P' {$pos = [Math]::Max(0, $pos - $pageSize)}
+'L' {$lastPageStart = [Math]::Max(0, [int][Math]::Floor(($content.Count - 1) / $pageSize) * $pageSize); $pos = $lastPageStart}
+
+'<' {$currentSearchIndex = ($searchHits | Where-Object {$_ -lt $pos} | Select-Object -Last 1)
+if ($null -eq $currentSearchIndex -and $searchHits -ne @()) {$currentSearchIndex = $searchHits[-1]; $statusmessage = "Wrapped to last match."; $errormessage = $null}
+$pos = $currentSearchIndex
+if (-not $searchHits -or $searchHits.Count -eq 0) {$errormessage = "No search in progress."; $statusmessage = $null}}
+'S' {Write-Host -f green "`n`nKeyword to search forward from this point in the logs" -n; $searchTerm = Read-Host " "
+if (-not $searchTerm) {$errormessage = "No keyword entered."; $statusmessage = $null; $searchTerm = $null; $searchHits = @(); continue}
+$pattern = "(?i)$searchTerm"; $searchHits = @(0..($content.Count - 1) | Where-Object { $content[$_] -match $pattern })
+if ($searchHits.Count -eq 0) {$errormessage = "Keyword not found in file."; $statusmessage = $null; $currentSearchIndex = -1}
+else {$currentSearchIndex = $searchHits | Where-Object { $_ -gt $pos } | Select-Object -First 1
+if ($null -eq $currentSearchIndex) {Write-Host -f green "No match found after this point. Jump to first match? (Y/N)" -n; $wrap = Read-Host " "
+if ($wrap -match '^[Yy]$') {$currentSearchIndex = $searchHits[0]; $statusmessage = "Wrapped to first match."; $errormessage = $null}
+else {$errormessage = "Keyword not found further forward."; $statusmessage = $null; $searchHits = @(); $searchTerm = $null}}
+$pos = $currentSearchIndex}}
+'>' {$currentSearchIndex = ($searchHits | Where-Object {$_ -gt $pos} | Select-Object -First 1)
+if ($null -eq $currentSearchIndex -and $searchHits -ne @()) {$currentSearchIndex = $searchHits[0]; $statusmessage = "Wrapped to first match."; $errormessage = $null}
+$pos = $currentSearchIndex
+if (-not $searchHits -or $searchHits.Count -eq 0) {$errormessage = "No search in progress."; $statusmessage = $null}}
+'C' {$searchTerm = $null; $searchHits.Count = 0; $searchHits = @(); $currentSearchIndex = $null}
+'Q' {cls; return}
+'U1L' {$pos = [Math]::Max($pos - 1, 0)}
+'D1L' {$pos = [Math]::Min($pos + 1, $content.Count - $pageSize)}
+
+default {if ($action -match '^[\+\-](\d+)$') {$offset = [int]$action; $newPos = $pos + $offset; $pos = [Math]::Max(0, [Math]::Min($newPos, $content.Count - $pageSize))}
+
+elseif ($action -match '^(\d+)$') {$jump = [int]$matches[1]
+if (-not $searchHits -or $searchHits.Count -eq 0) {$errormessage = "No search in progress."; $statusmessage = $null; continue}
+$targetIndex = $jump - 1
+if ($targetIndex -ge 0 -and $targetIndex -lt $searchHits.Count) {$pos = $searchHits[$targetIndex]
+if ($targetIndex -eq 0) {$statusmessage = "Jumped to first match."}
+else {$statusmessage = "Jumped to match #$($targetIndex + 1)."}; $errormessage = $null}
+else {$errormessage = "Match #$jump is out of range."; $statusmessage = $null}}
+
+elseif ($action -match '^A(\d+)$') {$requestedPage = [int]$matches[1]
+if ($requestedPage -lt 1 -or $requestedPage -gt $totalPages) {$errormessage = "Page #$requestedPage is out of range."; $statusmessage = $null}
+else {$pos = ($requestedPage - 1) * $pageSize}}
+
+else {$errormessage = "Invalid input."; $statusmessage = $null}}}}}
 
 # Display the contents of a function with colored comments.
 function details {param($command)
@@ -50,11 +174,10 @@ if (-not $cmd) {Write-Host -f green "$command is not a valid command, function, 
 $source = $cmd.Source; $callcommand = $command
 if ($cmd.CommandType -eq 'Alias') {$callcommand = $cmd.displayname; $parent = Get-Command $cmd.Definition; $definition = $parent.Definition -split "`n"; $definition += "sal -Name $command -Value $($cmd.Definition)"}
 else {$definition = $cmd.Definition -split "`n"}
-""; Write-Host -f cyan "Command: " -n; Write-Host -f yellow $callcommand; Write-Host -f cyan "Source: " -n; Write-Host -f yellow $source; Write-Host -f yellow ("-"*100)
-foreach ($line in $definition) {if ($line -match "^(.*?)(#.*)#?$") {Write-Host $matches[1] -f white -n; Write-Host $matches[2] -f yellow}
-elseif ($line -match "(?i)^\s*(sal|set-alias)\b") {Write-Host $line -f cyan}
-else {Write-Host $line -f white}}
-Write-Host -f yellow ("-"*100); ""; return}
+$name = "$callcommand"
+
+if ($definition.Count -gt 30) {assetviewer $name $definition}
+else {Write-Host -f cyan "`nCommand: " -n; Write-Host -f yellow $callcommand; Write-Host -f cyan "Source: " -n; Write-Host -f yellow $source; line yellow; contextdisplay $definition; line yellow -post; return}}
 
 # Set Notepad++ to the default editor, if available and edit files passed to it.
 function edit ($file){$script:edit = "notepad"; $npp = "Notepad++\notepad++.exe"; $paths = @("$env:ProgramFiles", "$env:ProgramFiles(x86)")
@@ -76,7 +199,7 @@ $ScriptFiles | ForEach-Object {$index = [Array]::IndexOf($ScriptFiles, $_) + 1; 
 if ($_.FullName.Substring($powershell.Length + 1) -match "(?i)\.psm1$") {Write-Host ($_.FullName.Substring($powershell.Length + 1)) -f darkcyan}
 elseif ($_.FullName.Substring($powershell.Length + 1) -match "(?i)\.psd1$") {Write-Host ($_.FullName.Substring($powershell.Length + 1)) -f darkgray}
 else {Write-Host ($_.FullName.Substring($powershell.Length + 1)) -f white}}
-""; Write-Host -f white "Select a script to " -n; [console]::foregroundcolor = "green"; $selection = Read-Host "VIEW"; [console]::foregroundcolor = "gray"
+""; Write-Host -f white "Select a script to " -n; Write-Host -f green "VIEW " -n; $selection = Read-Host
 if ($selection -notmatch "^\d+$") {""; return}
 if ([int]$selection -gt 0 -and [int]$selection -le $ScriptFiles.Count) {$resource = $ScriptFiles[$selection - 1].FullName}
 else {""; return}}
@@ -86,27 +209,12 @@ $configuration = [System.IO.Path]::Combine((Split-Path $resource), ([System.IO.P
 if ((Test-Path $configuration -ErrorAction SilentlyContinue) -and -not ([System.IO.Path]::GetExtension($resource) -match "\.psd1")) {$separator = "-" * 100; $configcontent = Get-Content $configuration; $resourcecontent = Get-Content $resource; $content = @(); $content += $configcontent; $content += $separator; $content += $resourcecontent}
 else {$content = Get-Content $resource}
 
-# Display.
-$lineCount = 0; $pauseAfter = 30; $index = 0; $total = $content.Count; $exit = $false
-while ($index -lt $total -and -not $exit) {cls; Write-Host -f green $resource; Write-Host -f yellow ("-"*100)
-while ($lineCount -lt $pauseAfter -and $index -lt $total) {$line = $content[$index]
-if ($line -match '^<?#') {Write-Host $line -f yellow}
-elseif ($line -match '(?i)^function\s') {Write-Host $line -f cyan}
-elseif ($line -match '(?i)^sal\s') {Write-Host $line -f green}
-else {Write-Host $line -f white}
-$lineCount++; $index++}
-""; Write-Host -f green ("-"*100); $lineCount = 0
-if ($index -lt $total) {Write-Host -f red $message; Write-Host -f green "Press [Enter] to continue, A to view the whole file, E to Edit or Q to quit: " -n; $input = Read-Host}
-$message = $null
-switch -Regex ($input) {'^(?i)q$' {[console]::foregroundcolor = "gray"; ""; $exit = $true}
-'^(?i)a$' {$pauseAfter = 10000}
-'^(?i)e$' {[console]::foregroundcolor = "gray"; ""; edit $resource; return}
-'^$' {}
-default {if ($index -lt $total) {$message = "Invalid input. Continuing..."; continue} else {return}}}}
-Write-Host -f yellow ("-"*100); ""; return}
+if ($content.Count -gt 30) {assetviewer $([System.IO.Path]::GetFileNameWithoutExtension($configuration)) $content}
+
+else {Write-Host -f cyan "`nScript: " -n; Write-Host -f yellow $([System.IO.Path]::GetFileNameWithoutExtension($configuration)); line yellow; contextdisplay $content; line yellow -post; return}}
 
 # View commands menu.
-if ($resourcetype -eq "cmd" -and $action -eq "view" -and $resource.length -le 1) {Write-Host -f yellow "`nAvailable Functions`n"; $functions = Get-Command -CommandType Function; $filtered = $functions | Where-Object {$_.ScriptBlock.File -like "*Users*"}; $filtered | ForEach-Object {Write-Host -f cyan "$($filtered.IndexOf($_) + 1). " -n; Write-Host -f white "$($_.Name)"}; Write-Host -f white "`nSelect a function to " -n; [console]::foregroundcolor = "green"; $selection = Read-Host "VIEW"; [console]::foregroundcolor = "gray"
+if ($resourcetype -eq "cmd" -and $action -eq "view" -and $resource.length -le 1) {Write-Host -f yellow "`nAvailable Functions`n"; $functions = Get-Command -CommandType Function; $filtered = $functions | Where-Object {$_.ScriptBlock.File -like "*Users*"}; $filtered | ForEach-Object {Write-Host -f cyan "$($filtered.IndexOf($_) + 1). " -n; Write-Host -f white "$($_.Name)"}; Write-Host -f white "`nSelect a function to " -n; Write-Host -f green "VIEW " -n; $selection = Read-Host
 while ($selection -ne "Q") {if ($selection -match '^\d{1,2}$') {$index = [int]$selection; if ($index -gt 0 -and $index -le $filtered.Count) {$function = $filtered[$index - 1].Name; details $function; ""; return}
 else {""; return}} else {""; return}};"" ; return}
 
@@ -114,7 +222,7 @@ else {""; return}} else {""; return}};"" ; return}
 if ($resourcetype -eq "cmd" -and $action -eq "view" -and (Get-Command $resource -ErrorAction SilentlyContinue)) {""; details $resource; return}
 
 # Edit commands menu.
-if ($resourcetype -eq "cmd" -and $action -eq "edit" -and $resource.length -le 1) {Write-Host -f yellow "`nAvailable Functions`n"; $functions = Get-Command -CommandType Function; $filtered = $functions | Where-Object {$_.ScriptBlock.File -like "*Users*"}; $filtered | ForEach-Object {$i = $filtered.IndexOf($_) + 1; $mod = if ($_.Module) {$_.Module.Name.ToUpper()} else {"PROFILE"}; Write-Host -f cyan "$i. " -n; Write-Host -f darkcyan "$mod\" -n; Write-Host -f white "$($_.Name)"}; Write-Host -f white "`nSelect a function parent file to " -n; [console]::foregroundcolor = "red"; $selection = Read-Host "EDIT"; [console]::foregroundcolor = "gray"
+if ($resourcetype -eq "cmd" -and $action -eq "edit" -and $resource.length -le 1) {Write-Host -f yellow "`nAvailable Functions`n"; $functions = Get-Command -CommandType Function; $filtered = $functions | Where-Object {$_.ScriptBlock.File -like "*Users*"}; $filtered | ForEach-Object {$i = $filtered.IndexOf($_) + 1; $mod = if ($_.Module) {$_.Module.Name.ToUpper()} else {"PROFILE"}; Write-Host -f cyan "$i. " -n; Write-Host -f darkcyan "$mod\" -n; Write-Host -f white "$($_.Name)"}; Write-Host -f white "`nSelect a function parent file to " -n; Write-Host -f red "EDIT " -n; $selection = Read-Host
 while ($selection -ne "Q") {if ($selection -match '^\d{1,2}$') {$index = [int]$selection; if ($index -gt 0 -and $index -le $filtered.Count) {$filePath = $filtered[$index - 1].ScriptBlock.File; edit $filePath; ""; return}
 else {""; return}} else {""; return}}}
 
@@ -127,7 +235,7 @@ $ScriptFiles | ForEach-Object {$index = [Array]::IndexOf($ScriptFiles, $_) + 1; 
 if ($($_.FullName.Substring($powershell.Length + 1)) -match "(?i)\.psm1$") {Write-Host $($_.FullName.Substring($powershell.Length + 1)) -f darkcyan}
 elseif ($($_.FullName.Substring($powershell.Length + 1)) -match "(?i)\.psd1$") {Write-Host $($_.FullName.Substring($powershell.Length + 1)) -f darkgray}
 else {Write-Host $($_.FullName.Substring($powershell.Length + 1)) -f white}}; ""
-Write-Host -f white "Select a script to " -n; [console]::foregroundcolor = "red"; $selection = Read-Host "EDIT"; [console]::foregroundcolor = "gray"
+Write-Host -f white "Select a script to " -n; Write-Host -f red "EDIT " -n; $selection = Read-Host
 if ([int]$selection -gt 0 -and [int]$selection -le $ScriptFiles.Count) {$selectedFile = $ScriptFiles[$selection - 1]; edit $selectedFile.FullName}
 else {[console]::foregroundcolor = "gray"; ""; return}}
 
